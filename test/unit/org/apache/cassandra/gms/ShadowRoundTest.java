@@ -28,6 +28,7 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -38,6 +39,7 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.MockMessagingService;
 import org.apache.cassandra.net.MockMessagingSpy;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.utils.FBUtilities;
 
 import static org.apache.cassandra.net.MockMessagingService.verb;
 import static org.junit.Assert.assertEquals;
@@ -113,4 +115,39 @@ public class ShadowRoundTest
         assertEquals(0, spyAck2.messagesIntercepted);
         assertEquals(0, spyMigrationReq.messagesIntercepted);
     }
+
+    @Test
+    public void testBadAckInShadow()
+    {
+        final AtomicBoolean ackSend = new AtomicBoolean(false);
+        MockMessagingSpy spySyn = MockMessagingService.when(verb(MessagingService.Verb.GOSSIP_DIGEST_SYN))
+                .respondN((msgOut, to) ->
+                {
+                    // ACK with bad data in shadow round
+                    if (!ackSend.compareAndSet(false, true))
+                    {
+                        while (!Gossiper.instance.isEnabled()) ;
+                    }
+
+                    HeartBeatState hb = new HeartBeatState(123, 456);
+                    EndpointState state = new EndpointState(hb);
+                    GossipDigestAck payload = new GossipDigestAck(
+                            Collections.singletonList(new GossipDigest(FBUtilities.getBroadcastAddress(), hb.getGeneration(), hb.getHeartBeatVersion())),
+                            Collections.singletonMap(FBUtilities.getBroadcastAddress(), state));
+
+                    logger.warn("Simulating digest ACK reply, {}", payload);
+                    return MessageIn.create(to, payload, Collections.emptyMap(), MessagingService.Verb.GOSSIP_DIGEST_ACK, MessagingService.current_version);
+                }, 1);
+
+        System.setProperty(Config.PROPERTY_PREFIX + "auto_bootstrap", "false");
+        try
+        {
+            StorageService.instance.initServer();
+        }
+        catch (Exception e)
+        {
+            assertEquals("Unable to gossip with any peers", e.getMessage());
+        }
+    }
+
 }
