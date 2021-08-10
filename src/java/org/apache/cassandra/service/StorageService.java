@@ -4449,7 +4449,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             {
                 public void run()
                 {
-                    shutdownClientServers();
                     Gossiper.instance.stop();
                     try
                     {
@@ -4522,6 +4521,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         setMode(Mode.LEAVING, "streaming hints to other nodes", true);
 
+        // If we don't disable native transport before transferring hints then new hints can be created
+        // after the transfer starts and those will remain on-disk and not be streamed to another node.
+        shutdownClientServers();
         Future hintsSuccess = streamHints();
 
         // wait for the transfer runnables to signal the latch.
